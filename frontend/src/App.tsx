@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, DragEvent } from 'react'
 
-const API = 'http://127.0.0.1:18000'
+// All /api requests are proxied by Vite to http://127.0.0.1:18000
+const API = ''
 
 // ======================== Types ========================
 interface Para { en: string; zh?: string; refs?: string[] }
@@ -228,7 +229,7 @@ function FigurePanel({ figures, activeRef }: { figures: Figure[]; activeRef: str
       </div>
       {figures.map(f => {
         const active = activeRef === f.id
-        const imgSrc = f.image_path ? `${API}${f.image_path}` : null
+        const imgSrc = f.image_path || null
 
         return (
           <div key={f.id} id={`fig-${f.id}`} style={{
