@@ -541,86 +541,164 @@ def _parse_references(sections: list[dict]) -> list[str]:
 
 # ======================== Figure Image Extraction ========================
 
-def _extract_figure_images(file_path: str, figures: list[dict]) -> list[dict]:
-    """Extract figure images from PDF using PyMuPDF and match to captions.
+def _extract_figure_images(file_path: str) -> list[dict]:
+    """Extract real figure images from PDF using PyMuPDF.
 
-    Returns enriched figures list with: id, caption, page, image_path, bbox.
+    Strategy:
+      1. Scan every page for figure captions ("Figure N." pattern).
+      2. For each page that has a caption, find the largest embedded image.
+      3. Render the image as high-quality PNG using pixmap.
+      4. Build a clean figure list: one entry per unique figure number.
+      5. Compound figures (one image with sub-panels A/B/C) → sub-figures
+         like "Figure 2A" get the same image_path as "Figure 2".
+
+    Returns:
+      [{id: "Figure 1", caption: "...", page: 2, image_path: "/static/figures/Figure_1.png"}]
     """
     try:
         doc = fitz.open(file_path)
     except Exception:
-        return figures
+        return []
 
     n_pages = len(doc)
     static_dir = os.path.join(os.path.dirname(__file__), "..", "static", "figures")
     os.makedirs(static_dir, exist_ok=True)
 
-    enriched: list[dict] = []
+    # ---- Step 1: find figure captions and images per page ----
+    page_figures: dict[int, list[dict]] = {}  # page_num → [figure entries]
 
-    for fig in figures:
-        fid = fig.get("id", "")
-        caption = fig.get("caption", "")
-        page_num = None
-        image_path = ""
+    for pi in range(n_pages):
+        page = doc[pi]
+        page_text = page.get_text()
 
-        # Try to find the figure image on each page
-        for pi in range(n_pages):
-            page = doc[pi]
-            page_text = page.get_text()
+        # Find all figure captions on this page
+        # Captions look like: "Figure N. Title text..." or "Figure N (continued)"
+        captions: list[tuple[str, str]] = []  # [(figure_id, caption_text)]
 
-            # Check if this page mentions the figure ID in text (caption area)
-            if fid.lower() not in page_text.lower():
+        for m in re.finditer(
+            r'(?:^|\n)\s*(Figure\s+(\d+)[A-Z]?)[\.\s]+(.+?)(?=\n(?:Figure\s+\d+|$))',
+            page_text, re.I | re.DOTALL
+        ):
+            fid = m.group(1).strip()
+            caption_text = m.group(3).strip().replace('\n', ' ')
+            captions.append((fid, caption_text))
+
+        # If multi-line captions aren't caught, try simpler pattern
+        if not captions:
+            for line in page_text.split('\n'):
+                m = re.match(r'^(Figure\s+\d+[A-Z]?)[\.\s]+(.+)', line.strip(), re.I)
+                if m:
+                    captions.append((m.group(1).strip(), m.group(2).strip()[:200]))
+
+        if not captions:
+            continue
+
+        # Get images on this page
+        images = page.get_images(full=True)
+        if not images:
+            # No embedded images — maybe the figure is vector art or text-based
+            # Still record the captions
+            for fid, cap in captions:
+                if pi + 1 not in page_figures:
+                    page_figures[pi + 1] = []
+                # Don't duplicate same ID on same page
+                if not any(f['id'] == fid for f in page_figures[pi + 1]):
+                    page_figures[pi + 1].append({
+                        'id': fid,
+                        'caption': cap,
+                        'page': pi + 1,
+                        'image_path': '',
+                    })
+            continue
+
+        # Find the largest image (likely the figure itself)
+        best_xref = None
+        best_area = 0
+        best_ext = 'png'
+
+        for img_info in images:
+            xref = img_info[0]
+            try:
+                base = doc.extract_image(xref)
+                w, h = base.get('width', 0), base.get('height', 0)
+                area = w * h
+                if area > best_area and area > 15000:  # ignore tiny icons
+                    best_area = area
+                    best_xref = xref
+                    best_ext = base.get('ext', 'png')
+            except Exception:
                 continue
 
-            # Find the largest image on or near this page
-            images = page.get_images(full=True)
-            if not images:
-                continue
+        if best_xref is None:
+            # No suitable image found
+            for fid, cap in captions:
+                if pi + 1 not in page_figures:
+                    page_figures[pi + 1] = []
+                if not any(f['id'] == fid for f in page_figures[pi + 1]):
+                    page_figures[pi + 1].append({
+                        'id': fid, 'caption': cap,
+                        'page': pi + 1, 'image_path': '',
+                    })
+            continue
 
-            best_image = None
-            best_area = 0
+        # Render image at high quality
+        primary_fid = captions[0][0] if captions else f'Figure_{pi+1}'
+        safe_name = primary_fid.replace(' ', '_')
+        fname = f"{safe_name}.png"
+        fpath = os.path.join(static_dir, fname)
 
-            for img_info in images:
-                xref = img_info[0]
+        if not os.path.exists(fpath):
+            try:
+                pix = fitz.Pixmap(doc, best_xref)
+                # Convert CMYK to RGB if needed
+                if pix.n > 4:
+                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                if pix.n == 4:  # RGBA → save as PNG with alpha
+                    pix.save(fpath)
+                else:
+                    pix.save(fpath)
+                pix = None  # free memory
+            except Exception:
+                # Fallback: raw extraction
                 try:
-                    base_image = doc.extract_image(xref)
-                    w, h = base_image.get("width", 0), base_image.get("height", 0)
-                    area = w * h
-                    # Prefer larger images (>10k pixels) as they're likely figures
-                    if area > best_area and area > 10000:
-                        best_area = area
-                        best_image = (xref, base_image, w, h)
+                    base = doc.extract_image(best_xref)
+                    with open(fpath, 'wb') as f:
+                        f.write(base['image'])
                 except Exception:
-                    continue
+                    pass
 
-            if best_image:
-                xref, base_image, w, h = best_image
-                ext = base_image.get("ext", "png")
-                safe_fid = fid.replace(" ", "_")
-                fname = f"{safe_fid}.{ext}"
-                fpath = os.path.join(static_dir, fname)
+        image_path = f"/static/figures/{fname}"
 
-                # Save if not already exists
-                if not os.path.exists(fpath):
-                    try:
-                        with open(fpath, "wb") as f:
-                            f.write(base_image["image"])
-                    except Exception:
-                        pass
-
-                image_path = f"/static/figures/{fname}"
-                page_num = pi + 1
-                break  # Found image for this figure, stop searching pages
-
-        enriched.append({
-            "id": fid,
-            "caption": caption,
-            "page": page_num,
-            "image_path": image_path,
-        })
+        # Assign this image to ALL figure captions on this page
+        for fid, cap in captions:
+            if pi + 1 not in page_figures:
+                page_figures[pi + 1] = []
+            if not any(f['id'] == fid for f in page_figures[pi + 1]):
+                page_figures[pi + 1].append({
+                    'id': fid,
+                    'caption': cap,
+                    'page': pi + 1,
+                    'image_path': image_path,
+                })
 
     doc.close()
-    return enriched
+
+    # ---- Step 2: Flatten and sort by figure number ----
+    result: list[dict] = []
+    for pi in sorted(page_figures.keys()):
+        for f in page_figures[pi]:
+            result.append(f)
+
+    # Sort by figure number (extract numeric part)
+    def _sort_key(f: dict) -> tuple:
+        m = re.match(r'Figure\s+(\d+)([A-Z]?)', f['id'], re.I)
+        if m:
+            return (int(m.group(1)), m.group(2))
+        return (9999, '')
+
+    result.sort(key=_sort_key)
+
+    return result
 
 
 # ======================== Main Pipeline ========================
@@ -647,14 +725,14 @@ def parse(file_path: str) -> dict[str, Any]:
     md = _repair_hyphenation(md)
 
     # S3: Section + figure parsing
-    sections, figures = _parse_sections(md)
+    sections, _ = _parse_sections(md)
     # Remove pymupdf4llm's embedded picture markers from body text
-    md_clean = re.sub(r'\*\*==>\s*picture\s*\[[^\]]*\].*?\n', '', md)
-    log.append(f'S3:{len(sections)}sec/{len(figures)}fig')
+    md = re.sub(r'\*\*==>\s*picture\s*\[[^\]]*\].*?\n', '', md)
+    log.append(f'S3:{len(sections)}sec')
 
-    # S3.5: Figure image extraction (PyMuPDF direct)
-    figures = _extract_figure_images(file_path, figures)
-    log.append(f'S3.5:{len([f for f in figures if f.get("image_path")])}fig_images')
+    # S3.5: Figure image extraction (PyMuPDF direct — builds clean figure list)
+    figures = _extract_figure_images(file_path)
+    log.append(f'S3.5:{len([f for f in figures if f.get("image_path")])}/{len(figures)}fig_images')
 
     # S4: Reference parsing
     references = _parse_references(sections)
