@@ -36,5 +36,11 @@ frontend/dist/
 test_output.md
 data/
 
+# Generated figure images (keep .gitkeep)
+backend/static/figures/*.jpeg
+backend/static/figures/*.jpg
+backend/static/figures/*.png
+
 # Ollama
 *.gguf
+uploads/
