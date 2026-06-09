@@ -220,34 +220,60 @@ function VocabDrawer({ show, onClose }: { show: boolean; onClose: () => void }) 
 // ======================== Figure Panel ========================
 function FigurePanel({ figures, activeRef }: { figures: Figure[]; activeRef: string | null }) {
   const imgCount = figures.filter(f => f.image_path).length
+  const [imgErrors, setImgErrors] = useState<Set<string>>(new Set())
+
+  const handleImgError = (id: string) => {
+    setImgErrors(prev => new Set(prev).add(id))
+  }
+
   return (
-    <aside style={{ width: 280, flexShrink: 0, background: '#fafbfc', borderLeft: '1px solid #e2e8f0', overflow: 'auto', padding: 12 }}>
-      <div style={{ fontWeight: 700, fontSize: 12, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10 }}>
+    <aside style={{ width: 290, flexShrink: 0, background: '#fafbfc', borderLeft: '1px solid #e2e8f0', overflow: 'auto', padding: 12 }}>
+      <div style={{ fontWeight: 700, fontSize: 12, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 10, position: 'sticky', top: 0, background: '#fafbfc', padding: '4px 0', zIndex: 1 }}>
         📊 Figures ({imgCount}/{figures.length})
       </div>
       {figures.map(f => {
         const active = activeRef === f.id
-        const imgSrc = f.image_path ? `${API}${f.image_path}` : `${API}/static/figures/${f.id.replace(' ', '_')}.png`
+        const imgSrc = f.image_path ? `${API}${f.image_path}` : ''
+        const hasError = imgErrors.has(f.id)
+
         return (
           <div key={f.id} id={`fig-${f.id}`} style={{
             background: '#fff', border: active ? '2px solid #2563eb' : '1px solid #e2e8f0',
-            borderRadius: 10, padding: 12, marginBottom: 10,
-            opacity: active ? 1 : .6, transition: 'all .3s',
+            borderRadius: 10, padding: 12, marginBottom: 12,
+            opacity: active ? 1 : .65, transition: 'all .3s',
             boxShadow: active ? '0 4px 16px rgba(37,99,235,.1)' : 'none',
           }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: '#2563eb', marginBottom: 4 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: '#2563eb', marginBottom: 6 }}>
               {f.id}
               {f.page && <span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 6 }}>p.{f.page}</span>}
             </div>
-            <img src={imgSrc}
-              loading="lazy"
-              style={{ width: '100%', borderRadius: 6, background: '#f1f5f9', minHeight: 80 }}
-              onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-            />
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, lineHeight: 1.4 }}>{f.caption.slice(0, 150)}</div>
+
+            {/* Image area */}
+            <div style={{ width: '100%', minHeight: 120, background: '#f1f5f9', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {imgSrc && !hasError ? (
+                <img
+                  src={imgSrc}
+                  loading="lazy"
+                  style={{ width: '100%', display: 'block' }}
+                  onError={() => handleImgError(f.id)}
+                  onLoad={e => { (e.target as HTMLImageElement).style.opacity = '1' }}
+                />
+              ) : (
+                <div style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', padding: 20 }}>
+                  {!imgSrc ? '📷 No image extracted' : '🖼️ Image unavailable'}
+                </div>
+              )}
+            </div>
+
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.4 }}>
+              {f.caption ? f.caption.slice(0, 180) : ''}
+            </div>
           </div>
         )
       })}
+      {figures.length === 0 && (
+        <div style={{ textAlign: 'center', color: '#94a3b8', marginTop: 40, fontSize: 12 }}>No figures detected</div>
+      )}
     </aside>
   )
 }
