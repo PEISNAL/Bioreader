@@ -44,3 +44,4 @@ backend/static/figures/*.png
 # Ollama
 *.gguf
 uploads/
+test2.pdf
