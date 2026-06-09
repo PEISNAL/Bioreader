@@ -667,7 +667,7 @@ def _extract_figure_images(file_path: str) -> list[dict]:
                 except Exception:
                     pass
 
-        image_path = f"/static/figures/{fname}"
+        image_path = f"/api/figures/{fname}"
 
         # Assign this image to ALL figure captions on this page
         for fid, cap in captions:

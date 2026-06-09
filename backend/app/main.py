@@ -4,6 +4,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .parser import parse
@@ -76,6 +77,14 @@ async def delete_vocab(word: str):
     if remove(word):
         return {"status": "deleted", "word": word}
     raise HTTPException(404, "Word not found")
+
+# ---- Figure Images (CORS-safe) ----
+@app.get("/api/figures/{name}")
+async def get_figure(name: str):
+    path = os.path.join("static", "figures", name)
+    if not os.path.exists(path):
+        raise HTTPException(404, "Figure not found")
+    return FileResponse(path, media_type="image/png")
 
 # ---- Translate (multi-backend pipeline) ----
 from .translator import translate as translate_text

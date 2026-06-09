@@ -220,11 +220,6 @@ function VocabDrawer({ show, onClose }: { show: boolean; onClose: () => void }) 
 // ======================== Figure Panel ========================
 function FigurePanel({ figures, activeRef }: { figures: Figure[]; activeRef: string | null }) {
   const imgCount = figures.filter(f => f.image_path).length
-  const [imgErrors, setImgErrors] = useState<Set<string>>(new Set())
-
-  const handleImgError = (id: string) => {
-    setImgErrors(prev => new Set(prev).add(id))
-  }
 
   return (
     <aside style={{ width: 290, flexShrink: 0, background: '#fafbfc', borderLeft: '1px solid #e2e8f0', overflow: 'auto', padding: 12 }}>
@@ -233,8 +228,7 @@ function FigurePanel({ figures, activeRef }: { figures: Figure[]; activeRef: str
       </div>
       {figures.map(f => {
         const active = activeRef === f.id
-        const imgSrc = f.image_path ? `${API}${f.image_path}` : ''
-        const hasError = imgErrors.has(f.id)
+        const imgSrc = f.image_path ? `${API}${f.image_path}` : null
 
         return (
           <div key={f.id} id={`fig-${f.id}`} style={{
@@ -248,22 +242,18 @@ function FigurePanel({ figures, activeRef }: { figures: Figure[]; activeRef: str
               {f.page && <span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 6 }}>p.{f.page}</span>}
             </div>
 
-            {/* Image area */}
-            <div style={{ width: '100%', minHeight: 120, background: '#f1f5f9', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-              {imgSrc && !hasError ? (
-                <img
-                  src={imgSrc}
-                  loading="lazy"
-                  style={{ width: '100%', display: 'block' }}
-                  onError={() => handleImgError(f.id)}
-                  onLoad={e => { (e.target as HTMLImageElement).style.opacity = '1' }}
-                />
-              ) : (
-                <div style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', padding: 20 }}>
-                  {!imgSrc ? '📷 No image extracted' : '🖼️ Image unavailable'}
-                </div>
-              )}
-            </div>
+            {/* Image — render directly, let browser handle loading/errors */}
+            {imgSrc ? (
+              <img
+                src={imgSrc}
+                alt={f.caption || f.id}
+                style={{ width: '100%', borderRadius: 6, background: '#f1f5f9', minHeight: 80, display: 'block' }}
+              />
+            ) : (
+              <div style={{ width: '100%', minHeight: 80, background: '#f1f5f9', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ color: '#94a3b8', fontSize: 12 }}>No image</span>
+              </div>
+            )}
 
             <div style={{ fontSize: 11, color: '#64748b', marginTop: 8, lineHeight: 1.4 }}>
               {f.caption ? f.caption.slice(0, 180) : ''}
