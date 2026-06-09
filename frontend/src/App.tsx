@@ -476,9 +476,14 @@ export default function App() {
               <h2 style={{ fontSize: 18, fontWeight: 700, borderBottom: '1px solid #e5e5e5', paddingBottom: 6, margin: '32px 0 16px' }}>📚 References ({refs.length})</h2>
               <ol style={{ fontSize: 12, lineHeight: 1.8, color: '#444', paddingLeft: 0, listStyle: 'none' }}>
                 {refs.map((r, i) => (
-                  <li key={i} style={{ marginBottom: 10, padding: '8px 12px', background: i % 2 === 0 ? '#fafbfc' : '#fff', borderRadius: 6, border: '1px solid #f1f5f9' }}>
-                    <span style={{ fontWeight: 700, color: '#2563eb', marginRight: 8, fontSize: 11 }}>[{i + 1}]</span>
-                    {r}
+                  <li key={i} style={{
+                    marginBottom: 14, padding: '10px 14px',
+                    background: i % 2 === 0 ? '#f8fafc' : '#fff',
+                    borderRadius: 8, border: '1px solid #e2e8f0',
+                    borderLeft: '3px solid #93c5fd',
+                  }}>
+                    <span style={{ fontWeight: 700, color: '#2563eb', marginRight: 10, fontSize: 12, fontFamily: 'monospace' }}>[{i + 1}]</span>
+                    <span style={{ color: '#334155' }}>{r}</span>
                   </li>
                 ))}
               </ol>

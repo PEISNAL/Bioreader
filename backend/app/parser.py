@@ -412,10 +412,10 @@ def _parse_sections(md: str) -> tuple[list[dict], list[dict]]:
             clean = re.sub(r'\s+', ' ', clean).strip()
             if re.match(r'^(?:Figure|Fig\.?)\s*\d+|\([A-Z]\)\s+', clean, re.I):
                 continue
-            refs = list(set(re.findall(r'Figure\s+\d+[A-Z]?', clean, re.I)))
+            raw_refs = list(set(re.findall(r'Figure\s+\d+', clean, re.I)))
             entry = {'en': clean}
-            if refs:
-                entry['refs'] = refs
+            if raw_refs:
+                entry['refs'] = raw_refs
             paragraphs.append(entry)
 
         if paragraphs:
@@ -563,6 +563,13 @@ def _extract_figure_images(file_path: str) -> list[dict]:
     n_pages = len(doc)
     static_dir = os.path.join(os.path.dirname(__file__), "..", "static", "figures")
     os.makedirs(static_dir, exist_ok=True)
+    # Clean stale figures from previous uploads
+    for old in os.listdir(static_dir):
+        if old.endswith('.png') and old.startswith('Figure_'):
+            try:
+                os.remove(os.path.join(static_dir, old))
+            except Exception:
+                pass
 
     # ---- Step 1: find figure captions and images per page ----
     page_figures: dict[int, list[dict]] = {}  # page_num → [figure entries]
