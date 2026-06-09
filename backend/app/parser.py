@@ -412,9 +412,9 @@ def _parse_sections(md: str) -> tuple[list[dict], list[dict]]:
             clean = re.sub(r'\s+', ' ', clean).strip()
             if re.match(r'^(?:Figure|Fig\.?)\s*\d+|\([A-Z]\)\s+', clean, re.I):
                 continue
-            raw_refs = list(set(re.findall(r'Fig\.?\s+\d+', clean, re.I)))
-            # Normalize to "Figure N" format
-            raw_refs = [re.sub(r'^Fig\.?\s+', 'Figure ', r, flags=re.I) for r in raw_refs]
+            raw_refs = list(set(re.findall(r'(?:Figure|Fig\.?)\s+\d+', clean, re.I)))
+            # Normalize all to "Figure N" format
+            raw_refs = [re.sub(r'^(?:Fig\.?|Figure)\s+', 'Figure ', r, flags=re.I) for r in raw_refs]
             entry = {'en': clean}
             if raw_refs:
                 entry['refs'] = raw_refs
