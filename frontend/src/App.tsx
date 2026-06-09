@@ -459,9 +459,9 @@ export default function App() {
                 return (
                 <p key={i} {...(p.refs?.length ? { 'data-ref': p.refs[0] } : {})}
                   style={{ fontSize: 14, lineHeight: 1.7, textAlign: 'justify', textIndent: '1.8em', marginBottom: 14, whiteSpace: 'pre-line', color: '#333', borderLeft: p.refs?.length ? '3px solid #93c5fd' : 'none', paddingLeft: p.refs?.length ? 12 : 0 }}>
-                  {/* Split text at Figure N and insert inline buttons */}
-                  {p.en.split(/(Figure\s+\d+)/gi).map((part, j) => {
-                    const m = part.match(/^Figure\s+(\d+)$/i)
+                  {/* Split text at Figure/Fig N and insert inline buttons */}
+                  {p.en.split(/((?:Figure|Fig\.?)\s+\d+)/gi).map((part, j) => {
+                    const m = part.match(/^(?:Figure|Fig\.?)\s+(\d+)$/i)
                     if (m) {
                       const figId = `Figure ${m[1]}`
                       if (figIds.has(figId)) {

@@ -412,7 +412,9 @@ def _parse_sections(md: str) -> tuple[list[dict], list[dict]]:
             clean = re.sub(r'\s+', ' ', clean).strip()
             if re.match(r'^(?:Figure|Fig\.?)\s*\d+|\([A-Z]\)\s+', clean, re.I):
                 continue
-            raw_refs = list(set(re.findall(r'Figure\s+\d+', clean, re.I)))
+            raw_refs = list(set(re.findall(r'Fig\.?\s+\d+', clean, re.I)))
+            # Normalize to "Figure N" format
+            raw_refs = [re.sub(r'^Fig\.?\s+', 'Figure ', r, flags=re.I) for r in raw_refs]
             entry = {'en': clean}
             if raw_refs:
                 entry['refs'] = raw_refs
@@ -430,124 +432,142 @@ def _parse_references(sections: list[dict]) -> list[str]:
     """Multi-strategy reference parsing — works across journals and formats.
 
     Split strategies (tried in priority order):
-      1. Numbered list: [1], 1., (1), 1) → split on each new number.
-      2. Year-parenthesis + author: ". (2000). " or ". Author, I. (2000)." → split.
-      3. Author boundary: ". Surname, I." at period-space-capital.
-      4. DOI boundary: lines ending with "doi:10.XXXX" mark reference end.
-      5. Fallback: paragraph breaks, then single newlines.
+      1. DOI-based: split at each DOI URL (most reliable boundary).
+      2. Bullet-list: split on "- " or "• " markers.
+      3. Numbered list: [1], 1., (1), 1).
+      4. Author-year: ". Surname, I. (2000)." pattern.
+      5. Fallback: paragraph/newline breaks.
     """
     ref_sec = next((s for s in sections if s['slug'] == 'references'), None)
     if not ref_sec:
         return []
 
-    # Join paragraphs but KEEP paragraph breaks as split hints
     paragraphs = [p['en'] for p in ref_sec['paragraphs']]
+
+    # ---- Step 0: Clean page headers from refs section ----
+    # Remove lines that look like page headers: "Short Title | N"
+    cleaned_paras = []
+    for p in paragraphs:
+        p = re.sub(r'\n\s*\w[\w\s]{3,30}\s*\|\s*\d+\s*$', '', p)
+        p = re.sub(r'^\s*\w[\w\s]{3,30}\s*\|\s*\d+\s*\n', '', p)
+        if p.strip():
+            cleaned_paras.append(p.strip())
+    paragraphs = cleaned_paras
+
+    # Join with newlines to preserve structure
     raw_text = '\n'.join(paragraphs)
 
-    # ---- Step 1: Try numbered-list split ----
-    numbered_pat = re.compile(r'(?:^|\n)\s*\[?\s*(\d+)\s*\]?\s*[\.\)\-–—]\s+')
-    numbered_matches = numbered_pat.findall(raw_text)
-
-    if len(numbered_matches) >= 3:
-        # Split before each numbered entry
-        parts = re.split(r'(?=(?:^|\n)\s*\[?\d+\]?\s*[\.\)\-–—]\s+)', raw_text)
-        parts = [p.strip() for p in parts if p.strip()]
+    # ---- Step 1: DOI-based split (most universal) ----
+    # Every reference ends with a DOI URL or "doi:10.XXXX"
+    # Split AFTER each DOI URL
+    doi_parts = re.split(
+        r'(https?://doi\.org/\S+)\s*',
+        raw_text
+    )
+    # Reconstruct: parts alternate text...DOI...text...DOI
+    # Even indices are text before a DOI, odd indices are the DOI itself
+    if len(doi_parts) >= 3:  # At least one DOI found
+        reconstructed = []
+        for i in range(0, len(doi_parts) - 1, 2):
+            entry = doi_parts[i].strip() + ' ' + doi_parts[i + 1].strip()
+            reconstructed.append(entry.strip())
+        if doi_parts[-1].strip():
+            reconstructed.append(doi_parts[-1].strip())
+        parts = reconstructed
     else:
-        # ---- Step 2: Try year-parenthesis + author split ----
-        # Matches: ". (2000). " or "). " followed by author or capital
-        year_split = re.split(
+        # Handle "doi:10.XXXX" (without https:// prefix)
+        doi2_parts = re.split(
+            r'(doi:\s*10\.\S+)\s*',
+            raw_text
+        )
+        if len(doi2_parts) >= 3:
+            reconstructed = []
+            for i in range(0, len(doi2_parts) - 1, 2):
+                entry = doi2_parts[i].strip() + ' ' + doi2_parts[i + 1].strip()
+                reconstructed.append(entry.strip())
+            if doi2_parts[-1].strip():
+                reconstructed.append(doi2_parts[-1].strip())
+            parts = reconstructed
+        else:
+            parts = [raw_text]
+
+    # ---- Step 2: If DOI split didn't work, try other strategies ----
+    if len(parts) < 3:
+        # Try bullet list: "- " or "• " at line start
+        bullet_parts = re.split(r'\n(?=\s*[-•]\s+)', raw_text)
+        parts = [p.strip() for p in bullet_parts if p.strip()]
+
+    if len(parts) < 3:
+        # Try numbered list
+        num_parts = re.split(r'(?=(?:^|\n)\s*\[?\d+\]?\s*[\.\)\-–—]\s+)', raw_text)
+        parts = [p.strip() for p in num_parts if p.strip()]
+
+    if len(parts) < 3:
+        # Try author-year split
+        parts = re.split(
             r'(?<=\.)\s+(?=[A-Z][a-zà-ÿ\-]{2,},\s+[A-Z]\.)',
             raw_text
         )
-        parts = [p.strip() for p in year_split if p.strip()]
+        parts = [p.strip() for p in parts if p.strip()]
 
-        # ---- Step 3: If still blob, try ". (YEAR). " split ----
-        if len(parts) < 3:
-            # Split on period + year + period + space + author
-            parts = re.split(
-                r'(?<=\)\.)\s+(?=[A-Z])',
-                raw_text
-            )
-            parts = [p.strip() for p in parts if p.strip()]
+    if len(parts) < 3:
+        # Fallback: each line is a reference
+        parts = [p.strip() for p in raw_text.split('\n') if p.strip()]
 
-        # ---- Step 4: DOI-based split ----
-        if len(parts) < 3:
-            parts = re.split(
-                r'(?<=doi:\s*10\.\d{4,}[^\s]*\.?)\s*',
-                raw_text
-            )
-            parts = [p.strip() for p in parts if p.strip()]
-
-        # ---- Step 5: Fallback to paragraph/newline splits ----
-        if len(parts) < 3:
-            parts = [p.strip() for p in raw_text.split('\n') if p.strip()]
-        if len(parts) < 3:
-            # Last resort: split on period-space-capital
-            parts = re.split(r'(?<=\.)\s+(?=[A-Z])', raw_text)
-            parts = [p.strip() for p in parts if p.strip()]
-
-    # ---- Merge continuation fragments ----
-    author_start = re.compile(r'^[A-Z][a-zà-ÿ\-]{2,},\s+[A-Z]\.')
-    num_start = re.compile(r'^\s*\[?\d+\]?\s*[\.\)\-–—]')
-
+    # ---- Step 3: Merge continuation fragments within each part ----
+    # Remove bullet/number markers and normalize
     entries: list[str] = []
-    current: list[str] = []
-
     for part in parts:
-        s = part.strip()
-        if not s:
-            continue
-
-        is_start = bool(author_start.match(s)) or bool(num_start.match(s))
-
-        if is_start and current:
-            entries.append(' '.join(current))
-            current = [s]
-        else:
-            current.append(s)
-
-    if current:
-        entries.append(' '.join(current))
-
-    # If merging produced too few entries, just use parts as-is
-    if len(entries) < 3 and len(parts) > len(entries):
-        entries = [' '.join([p.strip() for p in parts])]  # too aggressive merge, keep as single parts
-        # Re-split more aggressively
-        entries = []
-        for part in parts:
-            s = part.strip()
-            if s and len(s) > 25:
-                entries.append(s)
-
-    # ---- Clean each entry ----
-    cleaned: list[str] = []
-    for e in entries:
-        e = e.strip()
+        e = part.strip()
         if not e or len(e) < 25:
             continue
 
-        # Normalize dashes and whitespace
+        # Normalize
         e = e.replace('–', '-').replace('—', '-')
         e = re.sub(r'\s+', ' ', e)
         e = re.sub(r'\s*­\s*', '', e)
 
-        # Remove leading numbers/brackets
+        # Remove leading bullet/number
+        e = re.sub(r'^\s*[-•]\s+', '', e)
         e = re.sub(r'^\[?\s*\d+\s*\]?\s*[\.\)\-–—]\s*', '', e)
         e = re.sub(r'^\s*\(\d+\)\s*', '', e)
         e = re.sub(r'^\s*\d+\s*[\.\-–—]\s*', '', e)
 
+        # Fix DOI URLs: remove spaces inside URLs
+        e = re.sub(r'https?:\s*/\s*/\s*doi\s*\.\s*org\s*/\s*', 'https://doi.org/', e)
+        e = re.sub(r'doi\s*:\s*', 'doi:', e)
+        e = re.sub(r'(doi:\s*10\.\S+?)\s+(?=\S)', r'\1', e)
+
         # Fix encoding artifacts
-        e = e.replace('Â', '').replace('Ä', '')
+        e = e.replace('Â', '').replace('Ä', '').replace('�', '-')
+
+        # Remove residual page number prefixes: "007 - " or "805 "
+        e = re.sub(r'^\s*\d{2,4}\s*[-–—]\s*', '', e)
+        e = re.sub(r'^\s*\d{2,4}\s+(?=[A-Z])', '', e)
 
         e = e.strip()
         if len(e) > 25:
-            cleaned.append(e)
+            entries.append(e)
 
-    # Deduplicate by first 80 chars
+    # ---- Step 4: Merge entries that are obviously continuations ----
+    # A continuation is a short fragment or doesn't start with author pattern
+    author_start = re.compile(r'^[A-Z][a-zà-ÿ\-]{2,},\s+[A-Z]\.')
+    merged: list[str] = []
+    for e in entries:
+        if not merged:
+            merged.append(e)
+        elif author_start.match(e) or len(e) > 100:
+            # Looks like a new reference
+            merged.append(e)
+        else:
+            # Continuation of previous reference
+            merged[-1] = merged[-1] + ' ' + e
+
+    # Deduplicate by first 100 chars
     seen: set[str] = set()
     unique: list[str] = []
-    for e in cleaned:
-        prefix = e[:80].lower()
+    for e in merged:
+        prefix = e[:100].lower().replace(' ', '')
         if prefix not in seen:
             seen.add(prefix)
             unique.append(e)
