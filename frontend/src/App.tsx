@@ -121,7 +121,7 @@ function FigurePanel({ figures, activeRef, onFigureClick, panelRef }: {
   const imgCount = figures.filter(f => f.image_path).length
 
   return (
-    <aside ref={panelRef} style={{ width: 340, flexShrink: 0, background: '#fafbfc', borderLeft: '1px solid #e2e8f0', overflow: 'auto', padding: 14 }}>
+    <aside ref={panelRef} style={{ flex: '1 1 300px', maxWidth: 420, background: '#fafbfc', borderLeft: '1px solid #e2e8f0', overflow: 'auto', padding: 14 }}>
       <div style={{ fontWeight: 700, fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 12, position: 'sticky', top: 0, background: '#fafbfc', padding: '4px 0', zIndex: 1 }}>
         📊 Figures ({imgCount}/{figures.length})
       </div>
@@ -438,37 +438,50 @@ export default function App() {
         </nav>
 
         {/* Center scroll */}
-        <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: '24px 36px', maxWidth: 780 }}>
+        <div ref={scrollRef} style={{ flex: '0 1 720px', overflow: 'auto', padding: '24px 32px' }}>
           {secs.map(s => (
             <section key={s.slug} id={`sec-${s.slug}`}>
               <h2 style={{ fontSize: 18, fontWeight: 700, borderBottom: '1px solid #e5e5e5', paddingBottom: 6, margin: '24px 0 12px' }}>{s.title}</h2>
-              {s.paragraphs.map((p, i) => (
+              {s.paragraphs.map((p, i) => {
+                const handleFigureRefClick = (figId: string) => {
+                  setActiveRef(figId)
+                  setTimeout(() => {
+                    const figEl = document.getElementById(`fig-${figId}`)
+                    if (figEl && figurePanelRef.current) {
+                      figEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                    }
+                  }, 100)
+                }
+
+                // Build figure ID set for inline detection
+                const figIds = new Set(p.refs || [])
+
+                return (
                 <p key={i} {...(p.refs?.length ? { 'data-ref': p.refs[0] } : {})}
                   style={{ fontSize: 14, lineHeight: 1.7, textAlign: 'justify', textIndent: '1.8em', marginBottom: 14, whiteSpace: 'pre-line', color: '#333', borderLeft: p.refs?.length ? '3px solid #93c5fd' : 'none', paddingLeft: p.refs?.length ? 12 : 0 }}>
-                  {p.en}
-                  {p.refs?.map(r => {
-                    const handleFigureRefClick = () => {
-                      setActiveRef(r)
-                      // Scroll figure panel to the figure
-                      setTimeout(() => {
-                        const figEl = document.getElementById(`fig-${r}`)
-                        if (figEl && figurePanelRef.current) {
-                          figEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-                        }
-                      }, 100)
+                  {/* Split text at Figure N and insert inline buttons */}
+                  {p.en.split(/(Figure\s+\d+)/gi).map((part, j) => {
+                    const m = part.match(/^Figure\s+(\d+)$/i)
+                    if (m) {
+                      const figId = `Figure ${m[1]}`
+                      if (figIds.has(figId)) {
+                        return (
+                          <span key={j} onClick={() => handleFigureRefClick(figId)}
+                            style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', padding: '2px 8px', borderRadius: 5, cursor: 'pointer', fontWeight: 600, border: '1px solid #bfdbfe', display: 'inline', margin: '0 2px', whiteSpace: 'nowrap', transition: 'all .15s' }}
+                            onMouseEnter={e => { (e.target as HTMLElement).style.background = '#2563eb'; (e.target as HTMLElement).style.color = '#fff' }}
+                            onMouseLeave={e => { (e.target as HTMLElement).style.background = '#eff6ff'; (e.target as HTMLElement).style.color = '#2563eb' }}
+                            title={`Click to view ${figId} in side panel`}>
+                            📊 {figId}
+                          </span>
+                        )
+                      }
                     }
-                    return (
-                      <span key={r} onClick={handleFigureRefClick}
-                        style={{ fontSize: 11, background: '#eff6ff', color: '#2563eb', padding: '3px 9px', borderRadius: 6, marginLeft: 6, cursor: 'pointer', fontWeight: 600, border: '1px solid #bfdbfe', display: 'inline-block', transition: 'all .15s' }}
-                        onMouseEnter={e => { (e.target as HTMLElement).style.background = '#dbeafe' }}
-                        onMouseLeave={e => { (e.target as HTMLElement).style.background = '#eff6ff' }}>
-                        📊 {r}
-                      </span>
-                    )
+                    return <span key={j}>{part}</span>
                   })}
                   {p.zh && <span style={{ display: 'block', marginTop: 6, padding: '8px 12px', background: '#f0f9ff', borderLeft: '3px solid #0071e3', borderRadius: '0 6px 6px 0', fontSize: 13, color: '#1e40af' }}>{p.zh}</span>}
                 </p>
-              ))}
+                )
+              })}
             </section>
           ))}
           {refs.length > 0 && (

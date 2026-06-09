@@ -429,60 +429,66 @@ def _parse_sections(md: str) -> tuple[list[dict], list[dict]]:
 def _parse_references(sections: list[dict]) -> list[str]:
     """Multi-strategy reference parsing — works across journals and formats.
 
-    Strategy (tried in order):
-      1. Numbered-list mode: detect [1], 1., (1) patterns → split on each.
-      2. Author-year mode: split on ". Surname, I." boundaries (most common).
-      3. Line-break mode: use paragraph breaks as reference boundaries.
-      4. Clean and deduplicate.
-
-    Output always formatted as clean text (numbering added by frontend).
+    Split strategies (tried in priority order):
+      1. Numbered list: [1], 1., (1), 1) → split on each new number.
+      2. Year-parenthesis + author: ". (2000). " or ". Author, I. (2000)." → split.
+      3. Author boundary: ". Surname, I." at period-space-capital.
+      4. DOI boundary: lines ending with "doi:10.XXXX" mark reference end.
+      5. Fallback: paragraph breaks, then single newlines.
     """
     ref_sec = next((s for s in sections if s['slug'] == 'references'), None)
     if not ref_sec:
         return []
 
+    # Join paragraphs but KEEP paragraph breaks as split hints
     paragraphs = [p['en'] for p in ref_sec['paragraphs']]
+    raw_text = '\n'.join(paragraphs)
 
-    # ---- Step 1: Reconstruct text preserving paragraph boundaries ----
-    # Use double-newline as paragraph separator (preserves some structure)
-    raw_text = '\n\n'.join(paragraphs)
+    # ---- Step 1: Try numbered-list split ----
+    numbered_pat = re.compile(r'(?:^|\n)\s*\[?\s*(\d+)\s*\]?\s*[\.\)\-–—]\s+')
+    numbered_matches = numbered_pat.findall(raw_text)
 
-    # ---- Step 2: Split into individual references ----
-    # Pattern A: Numbered references [1], 1., (1), 1)
-    numbered_split = re.compile(
-        r'(?:^|\n)\s*\[?\s*(\d+)\s*\]?\s*[\.\)\-–—]\s+'
-    )
-
-    # Pattern B: Author-year boundary: ". Author, I." or ". Author, I.B."
-    # This matches: period + space + Capitalized surname + comma + initial(s) + period
-    author_boundary = re.compile(
-        r'\.\s+(?=[A-Z][a-zà-ÿ\-]{2,},\s+[A-Z]\.)'
-    )
-
-    # Check if this is a numbered reference list
-    numbered_matches = numbered_split.findall(raw_text)
-    is_numbered = len(numbered_matches) >= 3
-
-    if is_numbered:
-        # Split on each numbered entry
+    if len(numbered_matches) >= 3:
+        # Split before each numbered entry
         parts = re.split(r'(?=(?:^|\n)\s*\[?\d+\]?\s*[\.\)\-–—]\s+)', raw_text)
         parts = [p.strip() for p in parts if p.strip()]
     else:
-        # Try author-boundary split first
-        parts = author_boundary.split(raw_text)
-        parts = [p.strip() for p in parts if p.strip()]
+        # ---- Step 2: Try year-parenthesis + author split ----
+        # Matches: ". (2000). " or "). " followed by author or capital
+        year_split = re.split(
+            r'(?<=\.)\s+(?=[A-Z][a-zà-ÿ\-]{2,},\s+[A-Z]\.)',
+            raw_text
+        )
+        parts = [p.strip() for p in year_split if p.strip()]
 
-        # If that didn't work well (too few parts), use paragraph breaks
+        # ---- Step 3: If still blob, try ". (YEAR). " split ----
         if len(parts) < 3:
-            parts = [p.strip() for p in raw_text.split('\n\n') if p.strip()]
-            # Still too few? Try single newlines
-            if len(parts) < 3:
-                parts = [p.strip() for p in raw_text.split('\n') if p.strip()]
+            # Split on period + year + period + space + author
+            parts = re.split(
+                r'(?<=\)\.)\s+(?=[A-Z])',
+                raw_text
+            )
+            parts = [p.strip() for p in parts if p.strip()]
 
-    # ---- Step 3: Merge continuation fragments ----
-    # A continuation is a part that doesn't look like a reference start
+        # ---- Step 4: DOI-based split ----
+        if len(parts) < 3:
+            parts = re.split(
+                r'(?<=doi:\s*10\.\d{4,}[^\s]*\.?)\s*',
+                raw_text
+            )
+            parts = [p.strip() for p in parts if p.strip()]
+
+        # ---- Step 5: Fallback to paragraph/newline splits ----
+        if len(parts) < 3:
+            parts = [p.strip() for p in raw_text.split('\n') if p.strip()]
+        if len(parts) < 3:
+            # Last resort: split on period-space-capital
+            parts = re.split(r'(?<=\.)\s+(?=[A-Z])', raw_text)
+            parts = [p.strip() for p in parts if p.strip()]
+
+    # ---- Merge continuation fragments ----
     author_start = re.compile(r'^[A-Z][a-zà-ÿ\-]{2,},\s+[A-Z]\.')
-    numbered_start = re.compile(r'^\s*\[?\d+\]?\s*[\.\)\-–—]')
+    num_start = re.compile(r'^\s*\[?\d+\]?\s*[\.\)\-–—]')
 
     entries: list[str] = []
     current: list[str] = []
@@ -492,7 +498,7 @@ def _parse_references(sections: list[dict]) -> list[str]:
         if not s:
             continue
 
-        is_start = bool(author_start.match(s)) or bool(numbered_start.match(s))
+        is_start = bool(author_start.match(s)) or bool(num_start.match(s))
 
         if is_start and current:
             entries.append(' '.join(current))
@@ -503,19 +509,29 @@ def _parse_references(sections: list[dict]) -> list[str]:
     if current:
         entries.append(' '.join(current))
 
-    # ---- Step 4: Clean each entry ----
+    # If merging produced too few entries, just use parts as-is
+    if len(entries) < 3 and len(parts) > len(entries):
+        entries = [' '.join([p.strip() for p in parts])]  # too aggressive merge, keep as single parts
+        # Re-split more aggressively
+        entries = []
+        for part in parts:
+            s = part.strip()
+            if s and len(s) > 25:
+                entries.append(s)
+
+    # ---- Clean each entry ----
     cleaned: list[str] = []
     for e in entries:
         e = e.strip()
         if not e or len(e) < 25:
             continue
 
-        # Normalize
+        # Normalize dashes and whitespace
         e = e.replace('–', '-').replace('—', '-')
         e = re.sub(r'\s+', ' ', e)
-        e = re.sub(r'\s*­\s*', '', e)  # soft hyphens
+        e = re.sub(r'\s*­\s*', '', e)
 
-        # Remove leading number/bracket
+        # Remove leading numbers/brackets
         e = re.sub(r'^\[?\s*\d+\s*\]?\s*[\.\)\-–—]\s*', '', e)
         e = re.sub(r'^\s*\(\d+\)\s*', '', e)
         e = re.sub(r'^\s*\d+\s*[\.\-–—]\s*', '', e)
@@ -527,11 +543,11 @@ def _parse_references(sections: list[dict]) -> list[str]:
         if len(e) > 25:
             cleaned.append(e)
 
-    # Deduplicate by normalized prefix (first 60 chars)
+    # Deduplicate by first 80 chars
     seen: set[str] = set()
     unique: list[str] = []
     for e in cleaned:
-        prefix = e[:60].lower()
+        prefix = e[:80].lower()
         if prefix not in seen:
             seen.add(prefix)
             unique.append(e)
